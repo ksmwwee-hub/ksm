@@ -17,10 +17,8 @@
         input[type="text"] { width: 100%; box-sizing: border-box; padding: 12px; margin-top: 10px; border: 1px solid #dbdbdb; border-radius: 8px; font-size: 16px; outline: none; }
         button { width: 100%; padding: 14px; background-color: #0095f6; color: white; border: none; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 10px; cursor: pointer; }
         button:active { background-color: #007bb5; }
-        .reset-btn { background-color: #4CAF50; margin-top: 15px; }
-        .reset-btn:active { background-color: #45a049; }
         .loading { text-align: center; font-weight: bold; color: #0095f6; padding: 30px 0; }
-        .error { color: red; text-align: center; padding: 20px 0; font-weight: bold; }
+        .error { color: red; text-align: center; padding: 20px 0; font-weight: bold; font-size: 14px; line-height: 1.5; }
     </style>
 </head>
 <body>
@@ -49,43 +47,52 @@
                 let firstSheet = workbook.SheetNames[0];
                 let excelData = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet]);
                 
-                questionDB = excelData.map(row => {
-                    let errorRate = String(row['오답률']).replace('%', '').trim();
-                    return {
-                        id: String(row['이미지이름']).trim(),
-                        acc: 100 - parseFloat(errorRate),
-                        tag: String(row['유형']).trim(),
-                        answer: String(row['정답']).trim()
-                    };
+                // [오류 보정 로직] 엑셀 열 이름에 띄어쓰기가 있어도 자동으로 공백을 제거하고 매칭함
+                excelData.forEach(row => {
+                    let cleanRow = {};
+                    for (let key in row) {
+                        cleanRow[key.trim()] = row[key];
+                    }
+
+                    if (cleanRow['이미지이름'] !== undefined && cleanRow['오답률'] !== undefined) {
+                        let errorRate = String(cleanRow['오답률']).replace('%', '').trim();
+                        let accRate = 100 - parseFloat(errorRate);
+                        
+                        // 계산 가능한 정상적인 문제만 데이터베이스에 추가
+                        if (!isNaN(accRate)) {
+                            questionDB.push({
+                                id: String(cleanRow['이미지이름']).trim(),
+                                acc: accRate,
+                                tag: String(cleanRow['유형'] || '태그없음').trim(),
+                                answer: String(cleanRow['정답']).trim()
+                            });
+                        }
+                    }
                 });
                 
+                // 만약 정상적으로 읽어온 문제가 하나도 없다면 원인 안내
                 if(questionDB.length === 0) {
-                    document.getElementById("app").innerHTML = `<div class="error">❌ 엑셀 파일에 데이터가 없습니다.</div>`;
+                    document.getElementById("app").innerHTML = `
+                        <div class="error">
+                            ❌ 엑셀 데이터를 인식할 수 없습니다.<br><br>
+                            엑셀 첫 번째 줄(A1~D1)이 정확히<br>
+                            <b>이미지이름, 오답률, 유형, 정답</b> 으로 적혀 있는지 확인해 주세요.
+                        </div>`;
                     return;
                 }
                 
-                render();
+                render(); // 정상적이면 화면 그리기
             })
             .catch(error => {
                 document.getElementById("app").innerHTML = `
                     <div class="error">
-                        ❌ 엑셀 파일 로딩 실패!<br>
-                        '문제데이터.xlsx' 파일명을 확인해주세요.
+                        ❌ 엑셀 파일 로딩 실패!<br><br>
+                        깃허브에 올린 파일 이름이 <b>문제데이터.xlsx</b> 가 맞는지 확인해 주세요. (대소문자 구별 주의)
                     </div>`;
                 console.error(error);
             });
 
-        // 2. 완벽한 다시 풀기 (초기화) 기능
-        function resetApp() {
-            solvedIds = new Set();  // 푼 문제 목록 완벽 초기화
-            tagScores = {};          // 태그 점수 초기화
-            targetAcc = 50.0;        // 난이도 목표 50%로 리셋
-            currentQ = null;         // 현재 문제 변수 완벽 비우기
-            
-            render();                // 첫 화면 새로 다시 그리기
-        }
-
-        // 3. 인스타 알고리즘 맞춤형 문제 계산
+        // 2. 인스타 알고리즘 맞춤형 문제 계산
         function getNextQuestion() {
             let candidates = questionDB.filter(q => !solvedIds.has(q.id));
             if (candidates.length === 0) return null;
@@ -106,12 +113,12 @@
             return bestQuestion;
         }
 
-        // 4. 화면 렌더링
+        // 3. 화면 렌더링
         function render() {
             const app = document.getElementById("app");
             currentQ = getNextQuestion();
 
-            // 남은 문제가 없을 때 (학습 완료 화면)
+            // 남은 문제가 없을 때 (학습 완료 화면) - 다시풀기 버튼 제거됨
             if (!currentQ) {
                 let weakTagHtml = "현재 취약한 태그가 없습니다. 완벽합니다!";
                 let weakTags = Object.entries(tagScores).filter(([tag, score]) => score > 0).sort((a, b) => b[1] - a[1]);
@@ -130,7 +137,6 @@
                     <div style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:15px; border:1px solid #efefef;">
                         ${weakTagHtml}
                     </div>
-                    <button class="reset-btn" onclick="resetApp()">처음부터 다시 풀기 🔄</button>
                 `;
                 return;
             }
@@ -150,7 +156,7 @@
             `;
         }
 
-        // 5. 정답 채점 및 업데이트
+        // 4. 정답 채점 및 업데이트
         function submitAnswer() {
             const answer = document.getElementById("answerInput").value.trim();
             if (answer === "") {
