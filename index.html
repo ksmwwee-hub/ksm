@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>공스타 맞춤형 문제 추천</title>
-    <!-- 엑셀 파일을 읽기 위한 라이브러리 -->
+    <!-- 엑셀 파일 해석용 라이브러리 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     
     <style>
@@ -17,7 +17,7 @@
         input[type="text"] { width: 100%; box-sizing: border-box; padding: 12px; margin-top: 10px; border: 1px solid #dbdbdb; border-radius: 8px; font-size: 16px; outline: none; }
         button { width: 100%; padding: 14px; background-color: #0095f6; color: white; border: none; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 10px; cursor: pointer; }
         button:active { background-color: #007bb5; }
-        .reset-btn { background-color: #4CAF50; }
+        .reset-btn { background-color: #4CAF50; margin-top: 15px; }
         .reset-btn:active { background-color: #45a049; }
         .loading { text-align: center; font-weight: bold; color: #0095f6; padding: 30px 0; }
         .error { color: red; text-align: center; padding: 20px 0; font-weight: bold; }
@@ -36,8 +36,7 @@
         let targetAcc = 50.0;
         let currentQ = null;
 
-        // 1. 모바일 캐시 방지 및 엑셀 데이터 불러오기
-        // 뒤에 ?v=시간값을 붙여서 핸드폰이 무조건 최신 엑셀을 새로 다운받게 강제함
+        // 1. 캐시 방지 및 엑셀 데이터 불러오기
         const excelUrl = '문제데이터.xlsx?v=' + new Date().getTime();
 
         fetch(excelUrl)
@@ -60,9 +59,8 @@
                     };
                 });
                 
-                // 엑셀은 열었는데 내용이 비어있을 경우
                 if(questionDB.length === 0) {
-                    document.getElementById("app").innerHTML = `<div class="error">❌ 엑셀 파일에 데이터가 없습니다.<br>양식을 다시 확인해 주세요.</div>`;
+                    document.getElementById("app").innerHTML = `<div class="error">❌ 엑셀 파일에 데이터가 없습니다.</div>`;
                     return;
                 }
                 
@@ -72,19 +70,19 @@
                 document.getElementById("app").innerHTML = `
                     <div class="error">
                         ❌ 엑셀 파일 로딩 실패!<br>
-                        1. 깃허브에 '문제데이터.xlsx' 파일이 있는지 확인하세요.<br>
-                        2. 대소문자(xlsx vs XLSX)가 정확히 일치하는지 확인하세요.
+                        '문제데이터.xlsx' 파일명을 확인해주세요.
                     </div>`;
                 console.error(error);
             });
 
-        // 2. 처음부터 다시 풀기 기능 (초기화)
+        // 2. 완벽한 다시 풀기 (초기화) 기능
         function resetApp() {
-            solvedIds.clear();
-            tagScores = {};
-            targetAcc = 50.0;
-            currentQ = null;
-            render(); // 화면 새로고침
+            solvedIds = new Set();  // 푼 문제 목록 완벽 초기화
+            tagScores = {};          // 태그 점수 초기화
+            targetAcc = 50.0;        // 난이도 목표 50%로 리셋
+            currentQ = null;         // 현재 문제 변수 완벽 비우기
+            
+            render();                // 첫 화면 새로 다시 그리기
         }
 
         // 3. 인스타 알고리즘 맞춤형 문제 계산
@@ -132,7 +130,6 @@
                     <div style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:15px; border:1px solid #efefef;">
                         ${weakTagHtml}
                     </div>
-                    <!-- 새로 추가된 다시 풀기 버튼 -->
                     <button class="reset-btn" onclick="resetApp()">처음부터 다시 풀기 🔄</button>
                 `;
                 return;
@@ -164,11 +161,11 @@
             solvedIds.add(currentQ.id);
 
             if (answer === currentQ.answer) {
-                alert("⭕ 정답입니다!\\n해당 유형 노출을 줄이고 난이도를 높입니다.");
+                alert("⭕ 정답입니다!\n해당 유형 노출을 줄이고 난이도를 높입니다.");
                 tagScores[currentQ.tag] = (tagScores[currentQ.tag] || 0) - 15;
                 targetAcc = Math.max(10.0, targetAcc - 5.0);
             } else {
-                alert("❌ 오답입니다. (실제 정답: " + currentQ.answer + ")\\n해당 유형을 집중적으로 추천합니다!");
+                alert("❌ 오답입니다. (실제 정답: " + currentQ.answer + ")\n해당 유형을 집중적으로 추천합니다!");
                 tagScores[currentQ.tag] = (tagScores[currentQ.tag] || 0) + 20;
                 targetAcc = Math.min(90.0, targetAcc + 8.0);
             }
