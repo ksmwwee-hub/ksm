@@ -4,11 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>공스타 맞춤형 문제 추천</title>
-    <!-- 엑셀 파일을 읽기 위한 마법의 라이브러리(SheetJS) 추가 -->
+    <!-- 엑셀 파일을 읽기 위한 라이브러리 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     
     <style>
-        /* 모바일 UI 디자인 */
         body { font-family: 'Apple SD Gothic Neo', sans-serif; background-color: #fafafa; margin: 0; padding: 20px; display: flex; justify-content: center; }
         .app-container { background: white; width: 100%; max-width: 400px; padding: 20px; border-radius: 15px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); border: 1px solid #dbdbdb; }
         h2 { text-align: center; font-size: 20px; margin-top: 0; }
@@ -18,7 +17,10 @@
         input[type="text"] { width: 100%; box-sizing: border-box; padding: 12px; margin-top: 10px; border: 1px solid #dbdbdb; border-radius: 8px; font-size: 16px; outline: none; }
         button { width: 100%; padding: 14px; background-color: #0095f6; color: white; border: none; border-radius: 8px; font-weight: bold; font-size: 16px; margin-top: 10px; cursor: pointer; }
         button:active { background-color: #007bb5; }
+        .reset-btn { background-color: #4CAF50; }
+        .reset-btn:active { background-color: #45a049; }
         .loading { text-align: center; font-weight: bold; color: #0095f6; padding: 30px 0; }
+        .error { color: red; text-align: center; padding: 20px 0; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -34,34 +36,58 @@
         let targetAcc = 50.0;
         let currentQ = null;
 
-        // 1. 저장소에 있는 엑셀 파일(문제데이터.xlsx)을 웹이 자동으로 읽어오는 기능
-        fetch('문제데이터.xlsx')
-            .then(response => response.arrayBuffer())
+        // 1. 모바일 캐시 방지 및 엑셀 데이터 불러오기
+        // 뒤에 ?v=시간값을 붙여서 핸드폰이 무조건 최신 엑셀을 새로 다운받게 강제함
+        const excelUrl = '문제데이터.xlsx?v=' + new Date().getTime();
+
+        fetch(excelUrl)
+            .then(response => {
+                if (!response.ok) throw new Error("파일을 찾을 수 없습니다.");
+                return response.arrayBuffer();
+            })
             .then(data => {
                 let workbook = XLSX.read(data, {type: 'array'});
                 let firstSheet = workbook.SheetNames[0];
                 let excelData = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet]);
                 
-                // 엑셀 데이터를 알고리즘이 쓸 수 있게 변환
                 questionDB = excelData.map(row => {
                     let errorRate = String(row['오답률']).replace('%', '').trim();
                     return {
                         id: String(row['이미지이름']).trim(),
-                        acc: 100 - parseFloat(errorRate), // 오답률을 정답률로 변환
+                        acc: 100 - parseFloat(errorRate),
                         tag: String(row['유형']).trim(),
                         answer: String(row['정답']).trim()
                     };
                 });
                 
-                // 데이터 로딩이 끝나면 첫 화면 띄우기
+                // 엑셀은 열었는데 내용이 비어있을 경우
+                if(questionDB.length === 0) {
+                    document.getElementById("app").innerHTML = `<div class="error">❌ 엑셀 파일에 데이터가 없습니다.<br>양식을 다시 확인해 주세요.</div>`;
+                    return;
+                }
+                
                 render();
             })
             .catch(error => {
-                document.getElementById("app").innerHTML = `<div class="loading" style="color:red;">❌ 엑셀 파일을 읽어오지 못했습니다.<br>파일 이름이 '문제데이터.xlsx'인지 확인해주세요.</div>`;
+                document.getElementById("app").innerHTML = `
+                    <div class="error">
+                        ❌ 엑셀 파일 로딩 실패!<br>
+                        1. 깃허브에 '문제데이터.xlsx' 파일이 있는지 확인하세요.<br>
+                        2. 대소문자(xlsx vs XLSX)가 정확히 일치하는지 확인하세요.
+                    </div>`;
                 console.error(error);
             });
 
-        // 2. 인스타 알고리즘 맞춤형 문제 계산
+        // 2. 처음부터 다시 풀기 기능 (초기화)
+        function resetApp() {
+            solvedIds.clear();
+            tagScores = {};
+            targetAcc = 50.0;
+            currentQ = null;
+            render(); // 화면 새로고침
+        }
+
+        // 3. 인스타 알고리즘 맞춤형 문제 계산
         function getNextQuestion() {
             let candidates = questionDB.filter(q => !solvedIds.has(q.id));
             if (candidates.length === 0) return null;
@@ -82,15 +108,32 @@
             return bestQuestion;
         }
 
-        // 3. 화면 렌더링
+        // 4. 화면 렌더링
         function render() {
             const app = document.getElementById("app");
             currentQ = getNextQuestion();
 
+            // 남은 문제가 없을 때 (학습 완료 화면)
             if (!currentQ) {
+                let weakTagHtml = "현재 취약한 태그가 없습니다. 완벽합니다!";
+                let weakTags = Object.entries(tagScores).filter(([tag, score]) => score > 0).sort((a, b) => b[1] - a[1]);
+                
+                if(weakTags.length > 0) {
+                    weakTagHtml = `<div style="text-align:left; font-size:14px; margin-top:10px;"><b>📌 분석된 취약 태그:</b><br>`;
+                    weakTags.forEach(([tag, score]) => {
+                        weakTagHtml += `<span style="color:#e74c3c;">${tag}</span> (위험도 ${score}점)<br>`;
+                    });
+                    weakTagHtml += `</div>`;
+                }
+
                 app.innerHTML = `
                     <h2>🎉 학습 완료!</h2>
-                    <p style="text-align:center;">준비된 모든 문제를 풀었습니다.<br>알고리즘 분석이 종료됩니다.</p>
+                    <p style="text-align:center; font-size:14px; color:#666;">준비된 모든 문제를 풀었습니다.<br>알고리즘 분석이 종료됩니다.</p>
+                    <div style="background:#f8f9fa; padding:15px; border-radius:8px; margin-bottom:15px; border:1px solid #efefef;">
+                        ${weakTagHtml}
+                    </div>
+                    <!-- 새로 추가된 다시 풀기 버튼 -->
+                    <button class="reset-btn" onclick="resetApp()">처음부터 다시 풀기 🔄</button>
                 `;
                 return;
             }
@@ -104,14 +147,13 @@
                     <div>알고리즘 태그 점수: <span style="font-weight:bold; color:black;">${currentTagScore}점</span></div>
                 </div>
                 <div class="tag">${currentQ.tag}</div>
-                <!-- 띄어쓰기가 있는 파일명도 정상적으로 띄움 -->
                 <img src="${currentQ.id}.png" alt="문제 이미지" onerror="this.src='${currentQ.id}.jpg'">
                 <input type="text" id="answerInput" placeholder="정답을 입력하세요">
                 <button onclick="submitAnswer()">제출하기</button>
             `;
         }
 
-        // 4. 정답 채점 및 업데이트
+        // 5. 정답 채점 및 업데이트
         function submitAnswer() {
             const answer = document.getElementById("answerInput").value.trim();
             if (answer === "") {
